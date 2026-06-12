@@ -19,40 +19,40 @@ Transform :: struct {
     facing : i8 // -1 left, 1 right
 }
 
+TransformPoolError :: enum {
+    None,
+    TransformPoolExhausted
+}
+
 // Transform Pool
-max_transforms : int : 255 // The max number of transforms per pool
-transform_pool : [max_transforms]Transform // Declare pool type
+transform_pool : [max_entity_count]Transform // Declare pool type
 transform_count : int = 0 // This gives the current available index
-entity_to_transform_map : [dynamic]int // This uses the entity id as an index, the return value is the index of the entity's transform in the pool
+entity_to_transform_map : [max_entity_count]int
 // -1 means no transform exists in transform pool for entity
 
 init_entity_to_transform_pool :: proc() {
-    // Initialize entity to transform map
-    for i := 0; i < len(entity_to_transform_map); i += 1 {
+    for i : EntityId = 0; i < max_entity_count; i += 1 {
         entity_to_transform_map[i] = -1
     }
 }
 
-add_to_transform_pool :: proc(transform : Transform) -> int {
-// TODO: Determin the max number of entities in my game to make this logic simple
-
-    if int(transform.owner) >= max_transforms {
-        return -1
+upsert_to_transform_pool :: proc(transform : Transform) -> (int, TransformPoolError) {
+    // If the current index is equal to or greater than max allowed transforms, we return an error
+    if transform_count >= int(max_entity_count) {
+        return -1, .TransformPoolExhausted
     }
-
+    
     // The entity already contains a transform in the pool
     if entity_to_transform_map[transform.owner] != -1 {
-        return -1
+        idx := int(transform.owner)
+        return entity_to_transform_map[idx], .None
     }
 
-    if transform_count >= max_transforms {
-        return -1
-    }
 
     idx := transform_count
     transform_pool[idx] = transform
     entity_to_transform_map[transform.owner] = idx
     transform_count += 1
 
-    return idx
+    return idx, .None
 }
