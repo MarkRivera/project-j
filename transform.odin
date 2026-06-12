@@ -36,23 +36,38 @@ init_entity_to_transform_pool :: proc() {
     }
 }
 
-upsert_to_transform_pool :: proc(transform : Transform) -> (int, TransformPoolError) {
+get_or_insert_to_transform_pool :: proc(transform : Transform) -> (int, TransformPoolError) {
+    // The entity already contains a transform in the pool
+    if entity_to_transform_map[transform.owner] != -1 {
+        return entity_to_transform_map[transform.owner], .None
+    }
+
     // If the current index is equal to or greater than max allowed transforms, we return an error
     if transform_count >= int(max_entity_count) {
         return -1, .TransformPoolExhausted
     }
     
-    // The entity already contains a transform in the pool
-    if entity_to_transform_map[transform.owner] != -1 {
-        idx := int(transform.owner)
-        return entity_to_transform_map[idx], .None
-    }
-
-
     idx := transform_count
     transform_pool[idx] = transform
     entity_to_transform_map[transform.owner] = idx
     transform_count += 1
 
     return idx, .None
+}
+
+remove_from_transform_pool :: proc(entity_id: EntityId) -> bool {
+    pool_index := entity_to_transform_map[entity_id]
+    if pool_index == -1 {
+        return false
+    }
+    
+    last_transform := transform_pool[transform_count - 1]
+
+    transform_pool[pool_index] = last_transform
+    transform_count -= 1
+
+    entity_to_transform_map[last_transform.owner] = pool_index
+    entity_to_transform_map[entity_id] = -1
+
+    return true
 }
