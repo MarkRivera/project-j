@@ -1,5 +1,6 @@
 package main
 
+import "core:container/queue"
 import "core:math/fixed"
 import "vendor:raylib"
 import "core:mem"
@@ -57,12 +58,26 @@ main :: proc() {
     camera.fovy = 45.0
     camera.projection = .PERSPECTIVE
 
-    cube : Cube = Cube {}
+    entity_pool := EntityPool {}
+    queue.init(&entity_pool.recycled_ids, int(max_entity_count))
+    defer queue.destroy(&entity_pool.recycled_ids)
 
-    fixed.init_from_f64(&cube.position_x, 0)
-    fixed.init_from_f64(&cube.position_y, 0)
-    fixed.init_from_f64(&cube.forward_speed, 0.1)
-    fixed.init_from_f64(&cube.backward_speed, -0.1)
+    init_entity_to_transform_pool()
+
+
+    cube_id, cube_err := next_id(&entity_pool)
+    if cube_err == .PoolExhausted do panic("Entity Pool Exhausted!")
+
+
+    cube_transform := Transform {
+        owner = cube_id,
+        facing = 1,
+    }
+
+    insert_to_transform_pool(cube_transform)
+    defer remove_from_transform_pool(cube_transform.owner)
+
+
 
     game_state : GameState = GameState {
         accumulator = 0,
@@ -103,12 +118,24 @@ main :: proc() {
             fmt.println("SIM: Updating game state...")
             if input_state >= { .Left } {
                 fmt.println("SIM: Player is moving left...")
-                cube.position_x = fixed.add(cube.position_x, cube.backward_speed)
+                
+                if cube_transform := get_transform_ptr(cube_id); cube_transform != nil {
+                    backward_speed : Fixed16_16
+                    fixed.init_from_f64(&backward_speed, -0.1)
+
+                    cube_transform.x_pos = fixed.add(cube_transform.x_pos, backward_speed)
+                }
             }
 
             if input_state >= { .Right } {
                 fmt.println("SIM: Player is moving right...")
-                cube.position_x = fixed.add(cube.position_x, cube.forward_speed)
+                
+                if cube_transform := get_transform_ptr(cube_id); cube_transform != nil {
+                    forward_speed : Fixed16_16
+                    fixed.init_from_f64(&forward_speed, 0.1)
+
+                    cube_transform.x_pos = fixed.add(cube_transform.x_pos, forward_speed)
+                }
             }
             
 
@@ -123,10 +150,13 @@ main :: proc() {
         raylib.BeginDrawing()
             raylib.ClearBackground(raylib.WHITE)
             raylib.BeginMode3D(camera)
+                
+                if cube_transform, exists := get_from_transform_pool(cube_id); exists {
+                    cube_position := [3]f32 { f32(fixed.to_f64(cube_transform.x_pos)), f32(fixed.to_f64(cube_transform.y_pos)), 0 }
+                    raylib.DrawCube(cube_position, 2.0, 2.0, 2.0, raylib.RED)
+                    raylib.DrawCubeWires(cube_position, 2.0, 2.0, 2.0, raylib.MAROON)
+                }
 
-                cube_position := [3]f32 { f32(fixed.to_f64(cube.position_x)), f32(fixed.to_f64(cube.position_y)), 0 }
-                raylib.DrawCube(cube_position, 2.0, 2.0, 2.0, raylib.RED)
-                raylib.DrawCubeWires(cube_position, 2.0, 2.0, 2.0, raylib.MAROON)
 
                 raylib.DrawGrid(100, 1.0)
             raylib.EndMode3D()
