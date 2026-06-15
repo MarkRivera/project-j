@@ -16,7 +16,8 @@ Transform :: struct {
     x_acc : Fixed16_16,
     y_acc : Fixed16_16,
 
-    facing : i8 // -1 left, 1 right
+    facing : i8, // -1 left, 1 right
+    gravity_enabled : bool
 }
 
 TransformPoolError :: enum {

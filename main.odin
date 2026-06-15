@@ -1,5 +1,7 @@
 package main
 
+import "core:strconv"
+import "core:strings"
 import "core:container/queue"
 import "core:math/fixed"
 import "vendor:raylib"
@@ -9,16 +11,20 @@ import "core:time"
 
 FIXED_TIME_STEP :: 16_666_667 // 60 updates per second
 
-GameState :: struct {
+GameLoopState :: struct {
     accumulator : i64,
     max_simulation_steps : int,
     previous_time : i64,
-    is_running : bool
 }
 
-Cube :: struct {
-    position_x : fixed.Fixed16_16,
-    position_y : fixed.Fixed16_16,
+SimState :: struct {
+    round_timer : uint,
+    fighters : [2]Fighter,
+    transform_pool : [max_entity_count]Transform
+}
+
+Fighter :: struct {
+    entity_id : EntityId,
     forward_speed : fixed.Fixed16_16,
     backward_speed : fixed.Fixed16_16,
 }
@@ -61,17 +67,20 @@ main :: proc() {
     entity_pool := EntityPool {}
     queue.init(&entity_pool.recycled_ids, int(max_entity_count))
     defer queue.destroy(&entity_pool.recycled_ids)
-
     init_entity_to_transform_pool()
 
 
     cube_id, cube_err := next_id(&entity_pool)
     if cube_err == .PoolExhausted do panic("Entity Pool Exhausted!")
 
+    p1 := Fighter {
+        entity_id = cube_id
+    }
 
     cube_transform := Transform {
-        owner = cube_id,
+        owner = p1.entity_id,
         facing = 1,
+        gravity_enabled = true
     }
 
     insert_to_transform_pool(cube_transform)
@@ -79,17 +88,28 @@ main :: proc() {
 
 
 
-    game_state : GameState = GameState {
+    game_loop_state : GameLoopState = GameLoopState {
         accumulator = 0,
         max_simulation_steps = 8,
         previous_time = time.time_to_unix_nano(time.now()),
     }
 
+    sim_state : SimState = SimState {
+        round_timer = 99,
+        transform_pool = transform_pool
+    }
+
+    sim_state.fighters[0] = p1
+
+    pending_input : PlayerInput
+
     for !raylib.WindowShouldClose() {
+        pending_input = process_input()
+
         fmt.println("=== New Window Tick ===")
         current_time := time.time_to_unix_nano(time.now())
-        delta_time := current_time - game_state.previous_time
-        game_state.previous_time = current_time
+        delta_time := current_time - game_loop_state.previous_time
+        game_loop_state.previous_time = current_time
         
         
         // If user drags window or system is paused, cap delta_time to prevent spiral of death
@@ -99,53 +119,36 @@ main :: proc() {
 
         
         steps_executed := 0
-        game_state.accumulator += delta_time
+        game_loop_state.accumulator += delta_time
 
-        for game_state.accumulator >= FIXED_TIME_STEP  {
+        for game_loop_state.accumulator >= FIXED_TIME_STEP  {
             fmt.println("=== New Simulation Step ===")
             
             
-            if steps_executed >= game_state.max_simulation_steps  {
+            if steps_executed >= game_loop_state.max_simulation_steps  {
                 fmt.println("Too many simulation steps, preventing spiral...")
-                game_state.accumulator = 0
+                game_loop_state.accumulator = 0
                 break
             }
-
             
-            input_state : Input_Set = process_input()
+            frame_input : FrameInput = FrameInput {
+                p1 = pending_input
+            }
 
+            // fmt.println("Sending input state over network...")
+            // network.send(input_state)
             
             fmt.println("SIM: Updating game state...")
-            if input_state >= { .Left } {
-                fmt.println("SIM: Player is moving left...")
-                
-                if cube_transform := get_transform_ptr(cube_id); cube_transform != nil {
-                    backward_speed : Fixed16_16
-                    fixed.init_from_f64(&backward_speed, -0.1)
 
-                    cube_transform.x_pos = fixed.add(cube_transform.x_pos, backward_speed)
-                }
-            }
+            advance_sim(&sim_state, frame_input)
 
-            if input_state >= { .Right } {
-                fmt.println("SIM: Player is moving right...")
-                
-                if cube_transform := get_transform_ptr(cube_id); cube_transform != nil {
-                    forward_speed : Fixed16_16
-                    fixed.init_from_f64(&forward_speed, 0.1)
-
-                    cube_transform.x_pos = fixed.add(cube_transform.x_pos, forward_speed)
-                }
-            }
-            
-
-            game_state.accumulator -= FIXED_TIME_STEP
+            game_loop_state.accumulator -= FIXED_TIME_STEP
             steps_executed += 1
         }
 
         // Rendering Logic
         fmt.println("Rendering frame...")
-        alpha := f64(game_state.accumulator) / f64(FIXED_TIME_STEP) // Calculate how far we are into the next sim
+        alpha := f64(game_loop_state.accumulator) / f64(FIXED_TIME_STEP) // Calculate how far we are into the next sim
 
         raylib.BeginDrawing()
             raylib.ClearBackground(raylib.WHITE)
@@ -161,8 +164,20 @@ main :: proc() {
                 raylib.DrawGrid(100, 1.0)
             raylib.EndMode3D()
 
-            raylib.DrawText("Welcome to the third dimension!", 10, 40, 20, raylib.DARKGRAY)
+            round_timer_buffer : [32]byte
+            round_timer_str := strconv.write_uint(round_timer_buffer[:], u64(sim_state.round_timer), 10)
+            round_timer_buffer[len(round_timer_str)] = 0
+            
+            timer_str := strings.unsafe_string_to_cstring(round_timer_str)
+
+            timer_width := raylib.MeasureText(timer_str, 20)
+            raylib.DrawText(timer_str, (width / 2) - timer_width / 2, 40, 20, raylib.RED)
             raylib.DrawFPS(10, 10)
         raylib.EndDrawing()
+    }
+
+    advance_sim :: proc(state : ^SimState, input : FrameInput) {
+        apply_inputs(state, input)
+        apply_velocity(transform_pool[:transform_count])
     }
 }
